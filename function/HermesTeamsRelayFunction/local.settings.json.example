@@ -1,0 +1,11 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "RELAY_NAMESPACE": "<namePrefix>-relay.servicebus.windows.net",
+    "RELAY_HC_NAME": "hermes-teams-messages",
+    "RELAY_SEND_KEYNAME": "send-only",
+    "RELAY_SEND_KEY": "<fetch with az relay hyco authorization-rule keys list, see README>"
+  }
+}

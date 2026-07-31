@@ -1,0 +1,64 @@
+# ============================================================================
+# .NET
+# ============================================================================
+bin/
+obj/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.vs/
+.vscode/
+*.pdb
+project.lock.json
+project.assets.json
+*.csproj.user
+*.Cache
+
+# ============================================================================
+# Azure Functions
+# ============================================================================
+# Real per-machine function config (never commit — it holds live keys)
+local.settings.json
+
+# Function runtime state
+azure-functions-core-tools/
+Azurite/
+
+# ============================================================================
+# Windows service / listener runtime
+# ============================================================================
+# Real appsettings values may hold RELAY_LISTEN_KEY — never commit
+appsettings.Development.json
+appsettings.Local.json
+appsettings.*.local.json
+
+# ============================================================================
+# Editor / OS
+# ============================================================================
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# ============================================================================
+# Logs / temp
+# ============================================================================
+*.log
+logs/
+tmp/
+temp/
+
+# ============================================================================
+# Secrets / credentials (belt and braces — no filenames like these should ever
+# land in the tree, but keep them ignored just in case)
+# ============================================================================
+*.pfx
+*.pem
+*.key
+*.env
+.env
+.env.*
+!.env.example
+secrets/

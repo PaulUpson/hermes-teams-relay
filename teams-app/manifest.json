@@ -1,0 +1,35 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "4d50b0d2-0057-4099-a81a-ea652dd89ce4",
+  "developer": {
+    "name": "Paul Upson",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "Hermes",
+    "full": "Hermes Agent"
+  },
+  "description": {
+    "short": "Chat with Hermes Agent from Teams.",
+    "full": "Hermes Agent connected to Microsoft Teams via an Azure Relay-based messaging gateway."
+  },
+  "accentColor": "#1F2A44",
+  "bots": [
+    {
+      "botId": "4d50b0d2-0057-4099-a81a-ea652dd89ce4",
+      "scopes": ["personal", "team", "groupChat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}
