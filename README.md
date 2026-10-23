@@ -240,14 +240,21 @@ Publish, then create and start the service (elevated prompt):
 ```powershell
 dotnet publish -c Release -o C:\Services\HermesTeamsRelayListener
 
-sc.exe create HermesTeamsRelayListener binPath= "C:\Services\HermesTeamsRelayListener\HermesTeamsRelayListener.exe" start= auto
-sc.exe failure HermesTeamsRelayListener reset= 86400 actions= restart/5000/restart/5000/restart/5000
+sc.exe create HermesTeamsRelayListener binPath= "C:\Services\HermesTeamsRelayListener\HermesTeamsRelayListener.exe" start= delayed-auto
+sc.exe failure HermesTeamsRelayListener reset= 86400 actions= restart/5000/restart/5000/restart/60000
+sc.exe failureflag HermesTeamsRelayListener 1
 sc.exe start HermesTeamsRelayListener
 ```
 
 (`binPath=` and the other `key= value` pairs need that literal space after
-the `=` — that's `sc.exe`'s syntax, not a typo.) `sc.exe failure` makes it
-auto-restart on crash instead of just staying dead. Check status any time
+the `=` — that's `sc.exe`'s syntax, not a typo.) `start= delayed-auto` starts
+the service shortly after boot, when the network is more likely to be up.
+`sc.exe failure` makes it auto-restart instead of just staying dead, and
+`sc.exe failureflag ... 1` makes those restarts also fire when the listener
+exits with a non-zero code (which it does on a fatal config or auth error),
+not only on a crash. Transient connection failures at startup (network or DNS
+not ready) are retried inside the listener with exponential backoff, capped at
+`RELAY_RETRY_MAX_SECONDS` (default 60). Check status any time
 with `sc.exe query HermesTeamsRelayListener`, or via `services.msc` in the
 GUI. Logs go to the Windows Event Log (Event Viewer → Windows Logs →
 Application, source `HermesTeamsRelayListener`) instead of a console.

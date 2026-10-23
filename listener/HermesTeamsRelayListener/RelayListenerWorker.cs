@@ -42,37 +42,117 @@ public class RelayListenerWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Leave host StartAsync before any failure path: calling Environment.Exit while the
+        // host is still starting can deadlock against the service lifetime's shutdown wait.
+        await Task.Yield();
+
+        try
+        {
+            await RunAsync(stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // expected on shutdown
+        }
+        catch (Exception ex)
+        {
+            // Letting this escape would trigger BackgroundServiceExceptionBehavior.StopHost,
+            // which exits cleanly, so the Service Control Manager never runs its recovery
+            // actions. A non-zero exit code is reported as a failure instead.
+            _logger.LogCritical(ex, "relay listener cannot start");
+            Environment.Exit(1);
+        }
+    }
+
+    private async Task RunAsync(CancellationToken stoppingToken)
+    {
         var relayNamespace = RequireConfig("RELAY_NAMESPACE");
         var hcName = RequireConfig("RELAY_HC_NAME");
         var listenKeyName = RequireConfig("RELAY_LISTEN_KEYNAME");
         var listenKey = RequireConfig("RELAY_LISTEN_KEY");
         var hermesTargetUrl = _configuration["HERMES_TARGET_URL"] ?? "http://localhost:3978/api/messages";
         var timeoutSeconds = int.TryParse(_configuration["REQUEST_TIMEOUT_SECONDS"], out var t) ? t : 30;
+        var maxRetrySeconds = int.TryParse(_configuration["RELAY_RETRY_MAX_SECONDS"], out var m) && m > 0 ? m : 60;
         httpClient.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
 
+        var endpoint = new Uri($"sb://{relayNamespace}/{hcName}");
         var tokenProvider = TokenProvider.CreateSharedAccessSignatureTokenProvider(listenKeyName, listenKey);
-        _listener = new HybridConnectionListener(new Uri($"sb://{relayNamespace}/{hcName}"), tokenProvider);
 
-        _listener.Connecting += (_, _) => _logger.LogInformation("connecting to Azure Relay...");
-        _listener.Offline += (_, _) => _logger.LogWarning("offline — control channel dropped, retrying...");
-        _listener.Online += (_, _) => _logger.LogInformation("online — control channel established.");
+        var delay = TimeSpan.FromSeconds(2);
+        var maxDelay = TimeSpan.FromSeconds(maxRetrySeconds);
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        var attempt = 0;
 
-        _listener.RequestHandler = context => ForwardAsync(context, hermesTargetUrl);
+        while (true)
+        {
+            stoppingToken.ThrowIfCancellationRequested();
+            attempt++;
 
-        await _listener.OpenAsync(stoppingToken);
+            // HybridConnectionListener.OpenAsync marks the instance read-only before it
+            // connects, so a failed instance cannot be reopened; build a fresh one per attempt.
+            var listener = CreateListener(endpoint, tokenProvider, hermesTargetUrl);
+            try
+            {
+                await listener.OpenAsync(stoppingToken);
+                _listener = listener;
+                break;
+            }
+            catch (Exception ex) when (IsTransient(ex) && !stoppingToken.IsCancellationRequested)
+            {
+                await CloseQuietlyAsync(listener);
+                _logger.LogWarning(ex, "relay open attempt {Attempt} failed; retrying in {Delay}", attempt, delay);
+                await Task.Delay(delay, stoppingToken);
+                delay = TimeSpan.FromTicks(Math.Min(delay.Ticks * 2, maxDelay.Ticks));
+            }
+            catch
+            {
+                await CloseQuietlyAsync(listener);
+                throw;
+            }
+        }
+
         _logger.LogInformation(
-            "listening on hybrid connection '{HcName}' @ {Namespace}, forwarding to {Target}",
-            hcName, relayNamespace, hermesTargetUrl);
+            "listening on hybrid connection '{HcName}' @ {Namespace}, forwarding to {Target} (attempts: {Attempts}, elapsed: {Elapsed})",
+            hcName, relayNamespace, hermesTargetUrl, attempt, elapsed.Elapsed);
 
+        // Waits here for the service/process lifetime; stoppingToken fires
+        // on Ctrl+C in console mode or a Windows Service stop request.
+        await Task.Delay(Timeout.Infinite, stoppingToken);
+    }
+
+    private HybridConnectionListener CreateListener(Uri endpoint, TokenProvider tokenProvider, string hermesTargetUrl)
+    {
+        var listener = new HybridConnectionListener(endpoint, tokenProvider);
+        listener.Connecting += (_, _) => _logger.LogInformation("connecting to Azure Relay...");
+        listener.Offline += (_, _) => _logger.LogWarning("offline — control channel dropped, retrying...");
+        listener.Online += (_, _) => _logger.LogInformation("online — control channel established.");
+        listener.RequestHandler = context => ForwardAsync(context, hermesTargetUrl);
+        return listener;
+    }
+
+    // Auth and endpoint errors are config mistakes; retrying them forever would hide them.
+    private static bool IsTransient(Exception ex) => ex switch
+    {
+        AuthorizationFailedException => false,
+        EndpointNotFoundException => false,
+        RelayException => true,
+        TimeoutException => true,
+        HttpRequestException => true,
+        System.Net.Sockets.SocketException => true,
+        System.Net.WebSockets.WebSocketException => true,
+        _ => false,
+    };
+
+    private async Task CloseQuietlyAsync(HybridConnectionListener listener)
+    {
         try
         {
-            // Waits here for the service/process lifetime; stoppingToken fires
-            // on Ctrl+C in console mode or a Windows Service stop request.
-            await Task.Delay(Timeout.Infinite, stoppingToken);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await listener.CloseAsync(cts.Token);
         }
-        catch (OperationCanceledException)
+        catch (Exception ex)
         {
-            // expected on shutdown
+            _logger.LogDebug(ex, "ignoring error while closing a failed relay listener");
         }
     }
 
@@ -81,7 +161,14 @@ public class RelayListenerWorker : BackgroundService
         if (_listener is not null)
         {
             _logger.LogInformation("shutting down, closing relay listener...");
-            await _listener.CloseAsync(cancellationToken);
+            try
+            {
+                await _listener.CloseAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "error closing relay listener during shutdown");
+            }
         }
         await base.StopAsync(cancellationToken);
     }
